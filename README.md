@@ -3,10 +3,6 @@ Following cognitive architecture of language agents, AgentNet provide implementa
   
 Agent Net features a tree of agents to form logical decision trees. The lowest level agent always associated with tool/action, while the higher level agent serves as routers and decision making unit to plan sub task. So a major task is first disected to subgoals and procedures, and finally to executable actions. 
 
-# Use Case
-El-Agente: Computational Chemists    
-General Embedded Agents.  
-
 # Installation:   
 run:  
 pip install -r setup\requirements.txt  
