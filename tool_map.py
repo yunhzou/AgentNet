@@ -81,28 +81,9 @@ def Propose_New_Action(action_name:str, action_description:str):
     nosql_service["ToolProposal"]["ToolProposal"].insert_one('proposed_actions', {'action_name': action_name, 'action_description': action_description})
     return f"action {action_name} is proposed"
 
-from computational_chemistry_tool import *
-
 tool_map={"addition":addition,
           "multiplication":multiplication,
           "web_search":web_search,
           "read_webpage":read_webpage,
           "python_repl":repl_tool,
-          # for el-agente 
-          "rdkit_xyz_generation": rdkit_xyz_generation,
-          #"crest_geometry_optimization": crest_geometry_optimization,
-          "xtb_geometry_optimization": xtb_geometry_optimization,
-          "functional_selector": functional_selector,
-          "basis_set_selector": basis_set_selector,
-          "input_file_generator": input_file_generator,
-          "orca_executor": orca_executor,
-          "database_web_search": database_web_search,
-          "visualize_xyz": visualize_xyz,
-          "perplexity_ai_search": perplexity_ai_search,
-          "send_file_to_hpc": send_file_to_hpc,
-          "send_file_to_local": send_file_to_local,
-          "hpc_shell": hpc_shell,
-          "read_file_content": read_file_content,
-          "search_by_keywords": search_by_keywords,
-          "orca_proposal": orca_proposal,
           }
