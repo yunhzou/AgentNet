@@ -11,6 +11,8 @@ General Embedded Agents.
 run:  
 pip install -r setup\requirements.txt  
 
+Also install mongodb community version (comes with mongodbcompass GUI) and create the .env file. 
+
 # Setup:
 Create .env file, you dont need LANGCHAIN if you don't use langsmith to track the log. Its recommended that you include them. 
 OPENAI_API_KEY="<your-openai-api-key>"  
