@@ -39,7 +39,7 @@ class LangGraphAgentReact(LangGraphSupporter):
         self.executor_agent = executor
         self._create_agent()
 
-    def _initialize_session_memory(self):
+    def _initialize_system_message(self):
         system_message = """You run in a loop of Thought, Action, Terminate, Observation.
             At the end of the loop you output an Answer
             Use Thought to describe your thoughts about the question you have been asked.
@@ -61,7 +61,7 @@ class LangGraphAgentReact(LangGraphSupporter):
             Action: No action is required
             Terminate: True 
             """
-        return self.write_system_message(system_message)
+        return self.rewrite_system_message(system_message)
     
     def _create_agent(self):
         self.structured_llm = self.llm.with_structured_output(self.agent_schema)

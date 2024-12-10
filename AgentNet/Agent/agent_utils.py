@@ -75,6 +75,8 @@ def extract_all_text_exclude_edges(messages,last_num_messages=2):
     # check if index is out of bond, if so, return all messages
     if last_num_messages > len(filtered_messages):
         last_num_messages = len(filtered_messages)
+    if last_num_messages == 0:
+        return "No Context Needed"
     # get the last n messages
     filtered_messages = filtered_messages[-last_num_messages:]
     # Exclude the first and last message

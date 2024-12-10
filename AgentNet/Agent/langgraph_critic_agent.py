@@ -105,9 +105,9 @@ class LangGraphAgentCritic(LangGraphSupporter):
         self.llm = ChatOpenAI(temperature=0, model=model, **kwargs)
         super().__init__(session_id=session_id, **kwargs)
 
-    def _initialize_session_memory(self):
+    def _initialize_system_message(self):
         if self.system_message:
-            return self.write_system_message(self.system_message)
+            return self.rewrite_system_message(self.system_message)
         else:
             system_message = """
             You are a thoughtful critical agent. You help validate if a task is successfully finished.
@@ -119,7 +119,7 @@ class LangGraphAgentCritic(LangGraphSupporter):
 
             Be cautious and thoughtful in your judgment.
             """
-            return self.write_system_message(system_message)
+            return self.rewrite_system_message(system_message)
     
     def _create_agent(self):
         self.structured_llm = self.llm.with_structured_output(self.agent_schema)

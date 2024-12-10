@@ -8,7 +8,6 @@ from langchain.tools import tool
 from AgentNet import NodeManager,EdgeManager
 import uuid
 import types
-from AgentNet.Agent import LangGraphAgentCritic
 
 """
 Relavent files needed:
@@ -16,8 +15,25 @@ Database: stores the node and connections of the agent network
 Toolmap: stores the mapping between tool name and tool function, import all the actions there
 
 Each Node is an agent or a tool
-The endpoint will always be a tool
+The final layer will always be a tool
 """
+
+
+# TODO: Each sub tree layer should have a shared working memory that stores observation such as tool result.
+# This enhance the narrative for solving the task, but also deal with edge case where long observation cannot be injected properly in input_context. For example, code blocks that are lengthy.
+
+# TODO: add checkpoints in order for tool build + semantic and episodic. 
+    #TODO: figure out exactly how langgraph checkpoint works
+    # Add resume mode 
+        # Build customized ToolNode that can take resume and pass the function None instead of actual query ( right now the communication between subgraph is not through state)
+        # Add searech breakpoint 
+        # Add breakpoint whenever critic is False basically 
+
+    # In UI, add a global variable called interrupt and have a dynamic breakpoint (NodeInterrupt) listening to this global variable
+    
+
+# TODO: add critic intervention mechanism. so human can teach the right behavior
+
 
 def add_docstring(docstring, label):
     def decorator(func):
@@ -62,18 +78,21 @@ class AgentNetProcedureEdge(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         arbitrary_types_allowed=True)
+    
 
 class AgentNetManager():
     """Manages the agent network including nodes and edges."""
-    def __init__(self,project):
+    def __init__(self,project, session = "default"):
+        self.session = session
         self.procedure_nodes:List[AgentNetProcedureNode] = []
         self.tool_nodes:List[AgentNetToolNode] = []
         self.edges: List[AgentNetProcedureEdge] = []
         self.node_manager = NodeManager(project)
         self.edge_manager = EdgeManager(project)
-        self.initialize()   
         self.grounding_context=None
         self.grounding=None
+        self.initialize()   
+
 
     def add_grounding(self, grounding_context:str,grounding:Callable):
         self.grounding_context = grounding_context
@@ -107,8 +126,10 @@ class AgentNetManager():
             AgentNetProcedureNode: Procedure node
         """
         # TODO: Maybe Plug in Dspy for optimization
-        entity = LangGraphAgentReactExperimental(model=model,session_id=label)
+        entity = LangGraphAgentReactExperimental(model=model,session_id=label+"_"+self.session)
         entity.append_system_message(description)
+        if self.grounding:
+            entity.inject_text_block_human_message(block_name="Grounding",block_description=self.grounding_context,block_update_function=self.grounding)
         procedure_node = AgentNetProcedureNode(label=label,description=description,entity=entity)
         if procedure_node.label in [node.label for node in self.procedure_nodes]:
             print(f"Procedure node {procedure_node.label} already exists")
@@ -221,12 +242,14 @@ class AgentNetManager():
         edges_for_node = [edge for edge in self.edges if edge.from_.label == node.label]
         nodes_to_connect = [edge.to for edge in edges_for_node]
         tools_to_add = [
-            self.agent2tool(node_to_connect.entity,node_to_connect.description+"the query field must be a description string not any object",node_to_connect.label) if isinstance(node_to_connect, AgentNetProcedureNode) else node_to_connect.entity
+            self.agent2tool(node_to_connect.entity,
+                            node_to_connect.description+"the query field must be a description string not any object",
+                            node_to_connect.label) if isinstance(node_to_connect, AgentNetProcedureNode) else node_to_connect.entity
             for node_to_connect in nodes_to_connect
         ]
         node.entity.add_tool(tools_to_add)
         tools_description = ["Action: "+ node_to_connect.label + " Action Description: " + node_to_connect.description for node_to_connect in nodes_to_connect]
-        tools_description = "\n Here are the Available actions you have access to: \n"+"\n".join(tools_description) + "\n Try use them when proposing the actions. Say the action name in objective section and pass the action necessary input context. This is very important and if you do not follow this rule, you will get punished! \n You should Terminate if your tool cannot finish the task."
+        tools_description = "\n Here are the Available Actions you can choose from: \n"+"\n".join(tools_description) + "\n Note: \n Use them when proposing the actions. Say the action name in objective section and pass the action necessary input context. \n This is very important and if you do not follow this rule, you will get punished! \n You should Terminate if your tool cannot finish the task."
 
         node.entity.append_system_message(tools_description)
         return node
@@ -265,7 +288,7 @@ class AgentNetManager():
         to_type = "procedure" if isinstance(edge.to,AgentNetProcedureNode) else "tool"
         self.edge_manager.create(from_label=edge.from_.label,to_label=edge.to.label,from_type=from_type, to_type=to_type, weight=1)
 
-    def store(self):
+    def store_graph(self):
         """
         Store all the nodes and edges in the database
         """
@@ -286,12 +309,6 @@ class AgentNetManager():
             str: output of the agent network
         """
         input_node = next(node for node in self.procedure_nodes if node.label==input_node_label)
-        # update grounding
-        # TODO: add critic to main agent
-        if self.grounding:
-            updated_grounding = self.grounding()
-            #input_node.entity.add_switchable_text_block_system_message(block_name="Grounding",block_description=self.grounding_context,block_content=updated_grounding)
-            input_node.entity.add_switchable_text_block_message(block_name="Grounding",block_description=self.grounding_context,block_content=updated_grounding)
         return input_node.stream(query)
 
     def agent2tool(self,agent:LangGraphSupporter, description: str, label: str) -> BaseTool:
@@ -299,28 +316,12 @@ class AgentNetManager():
         # Define the inner function with the desired logic
         @add_docstring(description, label)
         def dynamic_tool(query: str):
-            if self.grounding:
-                updated_grounding = self.grounding()
-                agent.add_switchable_text_block_message(block_name="Grounding",block_description=self.grounding_context,block_content=updated_grounding)
             conversation = agent.stream(query)
             result_agent_response = conversation[-1].content
             result_observation = conversation[-2].content
-            """Adding critic agent"""
+            if type(result_observation)==list:
+                result_observation = result_observation[0]["text"] 
             result = result_agent_response + "\n" + result_observation
-            critic_agent =LangGraphAgentCritic(model="gpt-4o",session_id="criticagent_test")
-            critic_input = "Task: " + query + "\n" + "Agent Response: " + result_agent_response + "\n" + "Agent Observation: " + result_observation
-            critic_result = critic_agent.invoke_return_state(critic_input)
-            critic_reasoning = critic_result["critic"]
-            critic_result = critic_result["success"]
-            print(f"\033[92mCritic Result: {critic_result}\033[0m")
-            print(f"\033[92mCritic Reasoning: {critic_reasoning}\033[0m")
-            if critic_result!=True:
-                human_intervention=input("The agent failed to finish the task. To Continue, type Y, to raise Error, type N") 
-                if human_intervention=="Y":
-                    return result
-                else:
-                    raise ValueError(f"Agent failed to finish the task. Critic Reasoning: {critic_reasoning}")
-            #agent.clear_memory()
             return result
 
         # Dynamically set the function name using the `types.FunctionType` constructor
@@ -339,3 +340,8 @@ class AgentNetManager():
         dynamic_tool_with_label = tool(dynamic_tool_with_label,args_schema=query)  # Reapply the tool decorator
 
         return dynamic_tool_with_label
+    
+
+    def clear_memory(self):
+        for node in self.procedure_nodes:
+            node.entity.clear_memory()

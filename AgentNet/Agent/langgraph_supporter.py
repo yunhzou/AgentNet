@@ -1,6 +1,6 @@
 # abc class
 from abc import ABC, abstractmethod
-from typing import Optional, Union,List
+from typing import Optional, Union,List,Callable
 from .langgraph_utils import MongoDBSaver
 from pydantic import BaseModel, Field
 from typing import Optional, Annotated, TypedDict, Union,List
@@ -26,7 +26,7 @@ class LangGraphSupporter(ABC):
         self.config = {"configurable": {"thread_id": session_id}, "recursion_limit": self.recursion_limit} 
         self.tools = []
         self._create_agent()
-        self._initialize_session_memory()
+        self._initialize_system_message()
         self.message_blocks = []
 
     @abstractmethod
@@ -38,15 +38,14 @@ class LangGraphSupporter(ABC):
         self.agent = workflow.compile(checkpointer=self.memory_manager)
         raise NotImplementedError
         
-    def _initialize_session_memory(self):
+    def _initialize_system_message(self):
         """
         Insert agent system message
         """
         system_message = "You are a helpful assistant!"
-        self.write_system_message(system_message)
+        self.rewrite_system_message(system_message)
 
-
-    def write_system_message(self,system_message:str):
+    def rewrite_system_message(self,system_message:str):
             """
             Overwrite the systen message in the agent memory
 
@@ -75,6 +74,10 @@ class LangGraphSupporter(ABC):
                                                  block_name:str,
                                                  block_description:str, 
                                                  block_content:str):
+        """
+        Not In Used at the moment, DO NOT USE THIS EVER. 
+        LLMs are not sensitive to system message at all. 
+        """
         # append a grounding message section to the system message. When this function is called, always remove the previous grounding message
         block_prefix = block_name + ":\n"
         block_message = f"\n{block_prefix}\n{block_description}\n{block_content}"
@@ -83,24 +86,22 @@ class LangGraphSupporter(ABC):
         if block_prefix in self.system_message:
             self.system_message = self.system_message.split(block_prefix)[0]
         self.system_message += block_message
-        self.write_system_message(self.system_message)
+        self.rewrite_system_message(self.system_message)
 
-    def add_switchable_text_block_message(self,
-                                            block_name:str,
-                                            block_description:str, 
-                                            block_content:str):
+    def inject_text_block_human_message(self,
+                                        block_name:str,
+                                        block_description:str, 
+                                        block_update_function:Callable):
             """ Add a switchable text block to the agent memory"""
-            block_prefix = block_name + ":\n"
-            block_message = f"\n{block_prefix}\n{block_description}\n{block_content}"
-            self.message_blocks.append(block_message)
-
+            block = (block_name, block_description, block_update_function)
+            self.message_blocks.append(block)
 
     def append_system_message(self,system_message:str):
         # check if system message contains placeholder such as {}
         if "{}" in system_message:
             Exception("System message injection currently do not support placeholder, build your custom agent instead for this purpose")
         self.system_message = self.system_message+system_message
-        self.write_system_message(self.system_message)
+        self.rewrite_system_message(self.system_message)
 
     def add_tool(self,tool: Union[BaseTool, list]):
         if isinstance(tool, list):
@@ -122,53 +123,60 @@ class LangGraphSupporter(ABC):
 
     def invoke(self,user_input,image_urls:Optional[List[str]]=None)->List[BaseMessage]:
         """image_urls: list of image urls, can be local dir"""
-        if len(self.message_blocks)>0:
-            additional_message = "\n".join(self.message_blocks) + "\n"
-            user_input = user_input + additional_message
-        if image_urls is None:
-            image_urls = []
-        image_data = [image_to_base64(image_url) for image_url in image_urls]
-        user_input = HumanMessage(
-            content=[{"type": "text", "text": user_input}] + [{"type": "image_url", "image_url": {"url": img}} for img in image_data]
-        )
-        response = self.agent.invoke({"messages":[user_input]},self.config)
+        user_input = self._strcture_user_input(user_input,image_urls)
+        response = self.agent.invoke(input={"messages":[user_input]},config=self.config)
         return response["messages"]
     
-    def stream(self,user_input,image_urls:Optional[List[str]]=None)->List[BaseMessage]:
+    def stream(self,user_input,image_urls:Optional[List[str]]=None,print_=True)->List[BaseMessage]:
         """image_urls: list of image urls, can be local dir"""
-        if len(self.message_blocks)>0:
-            additional_message = "\n".join(self.message_blocks) + "\n"
-            user_input = user_input + additional_message
-        if image_urls is None:
-            image_urls = []
-        image_data = [image_to_base64(image_url) for image_url in image_urls]
-        user_input = HumanMessage(
-            content=[{"type": "text", "text": user_input}] + [{"type": "image_url", "image_url": {"url": img}} for img in image_data]
-        )
-
+        user_input = self._strcture_user_input(user_input,image_urls)
         messages = []
         for event in self.agent.stream({"messages": [user_input]},config=self.config):
             for value in event.values():
-                messages.append(value["messages"][-1])
-                print(value["messages"][-1].content)
+                if value is not None:
+                    messages.append(value["messages"][-1])
+                    if print_:
+                        content=value["messages"][-1].content
+                        if type(content) == list:
+                            content = content[0]["text"]
+                        print(content)
         return messages
     
-    def invoke_return_state(self,user_input,image_urls:Optional[List[str]]=None)->dict:
+    def invoke_return_graph_state(self,user_input,image_urls:Optional[List[str]]=None)->dict:
         """invoke method but return the state"""
-        if len(self.message_blocks)>0:
-            additional_message = "\n".join(self.message_blocks) + "\n"
-            user_input = user_input + additional_message
-        if image_urls is None:
-            image_urls = []
-        image_data = [image_to_base64(image_url) for image_url in image_urls]
-        user_input = HumanMessage(
-            content=[{"type": "text", "text": user_input}] + [{"type": "image_url", "image_url": {"url": img}} for img in image_data]
-        )
+        user_input = self._strcture_user_input(user_input,image_urls)
         response = self.agent.invoke({"messages":[user_input]},self.config)
         return response
+    
+    def stream_return_graph_state(self,user_input,image_urls:Optional[List[str]]=None,print_=False)->dict:
+        """image_urls: list of image urls, can be local dir"""
+        user_input = self._strcture_user_input(user_input,image_urls)
 
+        for event in self.agent.stream({"messages": [user_input]},config=self.config):
+            for value in event.values():
+                if value is not None:
+                    if print_:
+                        print(value["messages"][-1].content)
+                        #TODO: This is wrong dont use at the momemnt
+        return event.values()
 
     def clear_memory(self,print_log=True):
         thread_id = self.config["configurable"]["thread_id"]
         self.memory_manager.delete(thread_id,print_log=print_log)
-        self._initialize_session_memory()
+        self._initialize_system_message()
+
+    def _strcture_user_input(self,user_input,image_urls:Optional[List[str]]=None,print_=True):
+        if len(self.message_blocks)>0:
+            additional_message = ""
+            for block in self.message_blocks:
+                block_name, block_description, block_update_function = block
+                block_information = block_update_function()
+                additional_message += f"\n{block_name}:\n{block_description}\n{block_information}\n"
+            user_input = user_input + additional_message
+        if image_urls is None:
+            image_urls = []
+        image_data = [image_to_base64(image_url) for image_url in image_urls]
+        user_input = HumanMessage(
+            content=[{"type": "text", "text": user_input}] + [{"type": "image_url", "image_url": {"url": img}} for img in image_data]
+        )
+        return user_input
